@@ -8,6 +8,7 @@ What it does:
 - sets `model_auto_compact_token_limit=900000`
 - writes `~/.codex/codex-1m/model_catalog_1m.json`
 - rewrites every model in that catalog to a visible/effective 1M context window
+- rewrites the context usage tooltip to display 1M instead of 1000k
 - migrates old local rollout files so reopened threads do not keep stale `258400` context metadata
 - removes stale "full context" token markers from old context-window failures
 - repacks `app.asar` in place using a temporary file

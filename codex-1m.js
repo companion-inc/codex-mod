@@ -38,6 +38,17 @@ const patchedArgsList = [
 const patchedArgs =
   `args:[${patchedArgsList.map((arg) => `\`${escapeTemplateLiteralArg(arg)}\``).join(",")}]`;
 const appServerArgsPattern = /args:\[`app-server`,`--analytics-default-enabled`(?:,`[^`]*`)*\]/g;
+const uiTokenLabelHelper =
+  "function __codex1mTokenLabel(e){if(e==null||!Number.isFinite(e))return null;let t=Math.max(0,e);if(t>=999500){let e=Math.round(t/100000)/10;return (Number.isInteger(e)?String(e):e.toFixed(1))+`M`}return Math.round(t/1000)+`k`}";
+const uiContextUsageFunctionNeedle = "function _m(e){let t=(0,$.c)(30),{contextUsage:n}=e";
+const uiContextUsageTooltipNeedle =
+  "defaultMessage:`{usedTokens}k / {contextWindow}k tokens used`";
+const uiContextUsageTooltipReplacement =
+  "defaultMessage:`{usedTokens} / {contextWindow} tokens used`";
+const uiContextUsageValuesNeedle =
+  "values:{contextWindow:(0,Q.jsx)(Ht,{value:d}),usedTokens:(0,Q.jsx)(Ht,{value:l})}";
+const uiContextUsageValuesReplacement =
+  "values:{contextWindow:__codex1mTokenLabel(n.contextWindow),usedTokens:__codex1mTokenLabel(n.usedTokens)}";
 const patchMarker = modelCatalogOverride;
 const blockSize = 4 * 1024 * 1024;
 const sqliteBin = process.env.CODEX_1M_SQLITE || "/usr/bin/sqlite3";
@@ -525,18 +536,21 @@ function printStatus() {
 
 function hasPatch() {
   const archive = readAsar(asarPath);
-  let found = false;
+  let foundLaunchPatch = false;
+  let foundUiPatch = false;
   walk(archive.header, (filePath, entry) => {
-    if (found || !isPackedJsFile(filePath, entry)) {
+    if ((foundLaunchPatch && foundUiPatch) || !isPackedJsFile(filePath, entry)) {
       return;
     }
     const data = archive.buffer.subarray(
       archive.dataOffset + Number(entry.offset),
       archive.dataOffset + Number(entry.offset) + entry.size,
     );
-    found = data.toString("utf8").includes(patchedArgs);
+    const source = data.toString("utf8");
+    foundLaunchPatch = foundLaunchPatch || source.includes(patchedArgs);
+    foundUiPatch = foundUiPatch || sourceHasUiContextUsagePatch(source);
   });
-  return found;
+  return foundLaunchPatch && foundUiPatch;
 }
 
 function hasAnyContextPatch() {
@@ -553,17 +567,57 @@ function hasAnyContextPatch() {
     const source = data.toString("utf8");
     found =
       source.includes(patchMarker) ||
+      source.includes("__codex1mTokenLabel") ||
       source.includes("model_catalog_json=") ||
       source.includes("model_context_window=1000000");
   });
   return found;
 }
 
+function sourceHasUiContextUsagePatch(source) {
+  return (
+    source.includes("__codex1mTokenLabel") &&
+    source.includes(uiContextUsageTooltipReplacement) &&
+    source.includes(uiContextUsageValuesReplacement)
+  );
+}
+
+function patchUiContextUsageSource(source) {
+  if (!source.includes("composer.contextWindowUsageTooltip")) {
+    return { source, changed: false, found: false };
+  }
+
+  let changed = false;
+  if (!source.includes("__codex1mTokenLabel")) {
+    if (!source.includes(uiContextUsageFunctionNeedle)) {
+      return { source, changed: false, found: false };
+    }
+    source = source.replace(
+      uiContextUsageFunctionNeedle,
+      `${uiTokenLabelHelper}${uiContextUsageFunctionNeedle}`,
+    );
+    changed = true;
+  }
+  if (source.includes(uiContextUsageTooltipNeedle)) {
+    source = source.replace(uiContextUsageTooltipNeedle, uiContextUsageTooltipReplacement);
+    changed = true;
+  }
+  if (source.includes(uiContextUsageValuesNeedle)) {
+    source = source.replace(uiContextUsageValuesNeedle, uiContextUsageValuesReplacement);
+    changed = true;
+  }
+
+  return { source, changed, found: sourceHasUiContextUsagePatch(source) };
+}
+
 function patchAsar() {
   const archive = readAsar(asarPath);
   let replacements = 0;
+  let uiReplacements = 0;
   const patchedFiles = [];
   const packed = new Map();
+  let foundLaunchPatch = false;
+  let foundUiPatch = false;
 
   walk(archive.header, (filePath, entry) => {
     if (entry.unpacked || entry.offset == null) {
@@ -578,15 +632,29 @@ function patchAsar() {
     if (isPackedJsFile(filePath, entry)) {
       let source = data.toString("utf8");
       if (source.includes(patchedArgs)) {
+        foundLaunchPatch = true;
         patchedFiles.push(filePath);
       } else {
         const fileReplacements = (source.match(appServerArgsPattern) || []).length;
         source = source.replace(appServerArgsPattern, patchedArgs);
         if (fileReplacements > 0) {
+          foundLaunchPatch = true;
           replacements += fileReplacements;
           patchedFiles.push(filePath);
-          data = Buffer.from(source, "utf8");
         }
+      }
+
+      const uiPatch = patchUiContextUsageSource(source);
+      if (uiPatch.found) {
+        foundUiPatch = true;
+      }
+      if (uiPatch.changed) {
+        uiReplacements += 1;
+        patchedFiles.push(filePath);
+        source = uiPatch.source;
+      }
+      if (source !== data.toString("utf8")) {
+        data = Buffer.from(source, "utf8");
       }
     }
 
@@ -596,8 +664,14 @@ function patchAsar() {
   if (replacements > 0) {
     console.log(`patched launch arg sites: ${replacements} in ${[...new Set(patchedFiles)].join(", ")}`);
   }
-  if (replacements === 0 && patchedFiles.length === 0) {
-    throw new Error("patch target not found in any packed desktop JS file");
+  if (uiReplacements > 0) {
+    console.log(`patched context usage tooltip sites: ${uiReplacements}`);
+  }
+  if (!foundLaunchPatch) {
+    throw new Error("app-server launch patch target not found in any packed desktop JS file");
+  }
+  if (!foundUiPatch) {
+    throw new Error("context usage tooltip patch target not found in any packed desktop JS file");
   }
 
   let offset = 0;
@@ -634,7 +708,7 @@ function updateAsarIntegrity(hash) {
 
 function signAndVerifyApp() {
   const childProcess = require("child_process");
-  childProcess.execFileSync("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", appRoot], {
+  childProcess.execFileSync("/usr/bin/codesign", ["--force", "--sign", "-", appRoot], {
     stdio: "inherit",
   });
   childProcess.execFileSync(

@@ -17,7 +17,7 @@ usage() {
   cat <<EOF
 usage: install.sh [apply|status|restore|install-agent|uninstall-agent]
 
-apply           Install/update Codex Mod and apply the Codex Desktop 1M patch.
+apply           Install/update Codex Mod, apply the 1M patch, and restart Codex if needed.
 status          Show patch, ASAR integrity, and codesign status.
 restore         Restore the newest saved app.asar backup.
 install-agent   Apply now and install a LaunchAgent to reapply after app updates.
@@ -30,7 +30,13 @@ install_patcher() {
   local source_dir
   local local_patcher
   local local_installer
-  source_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P || true)"
+  local bash_source
+  bash_source="${BASH_SOURCE[0]:-}"
+  if [[ -n "${bash_source}" ]]; then
+    source_dir="$(cd "$(dirname "${bash_source}")" 2>/dev/null && pwd -P || true)"
+  else
+    source_dir=""
+  fi
   local_installer="${source_dir}/install.sh"
   local_patcher="${source_dir}/codex-mod.js"
   if [[ -n "${source_dir}" && -f "${local_installer}" ]]; then
@@ -52,7 +58,7 @@ install_patcher() {
 
 apply_patch() {
   install_patcher
-  "${PATCHER}" apply
+  "${NODE_BIN}" "${PATCHER}" apply-and-restart
 }
 
 status_patch() {
@@ -81,7 +87,7 @@ install_agent() {
   <array>
     <string>${NODE_BIN}</string>
     <string>${PATCHER}</string>
-    <string>apply</string>
+    <string>apply-and-restart</string>
   </array>
   <key>RunAtLoad</key>
   <true/>

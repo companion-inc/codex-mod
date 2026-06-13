@@ -269,6 +269,93 @@ function signAndVerifyApp() {
   );
 }
 
+function desktopAppServerProcesses() {
+  const childProcess = require("child_process");
+  const output = childProcess.execFileSync("/bin/ps", ["axo", "pid=,command="], {
+    encoding: "utf8",
+  });
+  return output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const match = line.match(/^(\d+)\s+(.*)$/);
+      return match ? { pid: Number(match[1]), command: match[2] } : null;
+    })
+    .filter(Boolean)
+    .filter(
+      (processInfo) =>
+        processInfo.command.includes(path.join(resourcesDir, "codex")) &&
+        processInfo.command.includes(" app-server ") &&
+        !processInfo.command.includes(" --listen stdio://"),
+    );
+}
+
+function codexDesktopIsRunning() {
+  try {
+    require("child_process").execFileSync("/usr/bin/pgrep", ["-x", "Codex"], {
+      stdio: "ignore",
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function restartCodexDesktop() {
+  const childProcess = require("child_process");
+  const processes = desktopAppServerProcesses();
+  const staleProcesses = processes.filter((processInfo) => !processInfo.command.includes(patchMarker));
+  const patchedProcesses = processes.filter((processInfo) => processInfo.command.includes(patchMarker));
+  const codexWasRunning = codexDesktopIsRunning() || processes.length > 0;
+
+  if (!codexWasRunning) {
+    console.log("Codex Desktop is not running; patched args will apply next launch");
+    return;
+  }
+
+  if (staleProcesses.length === 0 && patchedProcesses.length > 0) {
+    console.log("Codex Desktop is already running with patched app-server args");
+    return;
+  }
+
+  const stalePids = staleProcesses.map((processInfo) => processInfo.pid).join(", ");
+  if (stalePids.length > 0) {
+    console.log(`Codex Desktop has stale app-server pid(s): ${stalePids}`);
+  }
+
+  const restartScript = [
+    "osascript -e 'tell application id \"com.openai.codex\" to quit' >/dev/null 2>&1 || true",
+    "sleep 2",
+    `open ${JSON.stringify(appRoot)}`,
+  ].join("; ");
+  childProcess.spawn("/bin/sh", ["-c", restartScript], {
+    detached: true,
+    stdio: "ignore",
+  }).unref();
+  console.log("Codex Desktop clean restart scheduled");
+}
+
+function applyPatch() {
+  const current = status();
+  if (current.fullyApplied) {
+    console.log("already fully applied");
+    return;
+  }
+  let newHash = current.asarHash;
+  if (current.desiredPatch) {
+    console.log("backup skipped: app.asar is already patched");
+  } else if (current.anyContextPatch) {
+    console.log("backup skipped: app.asar already has a context patch");
+    newHash = patchAsar();
+  } else {
+    backupOriginal();
+    newHash = patchAsar();
+  }
+  updateAsarIntegrity(newHash);
+  signAndVerifyApp();
+}
+
 function restore() {
   const backups = fs
     .readdirSync(resourcesDir)
@@ -288,28 +375,15 @@ function restore() {
 
 const command = process.argv[2] || "apply";
 if (command === "apply") {
-  const current = status();
-  if (current.fullyApplied) {
-    console.log("already fully applied");
-    process.exit(0);
-  }
-  let newHash = current.asarHash;
-  if (current.desiredPatch) {
-    console.log("backup skipped: app.asar is already patched");
-  } else if (current.anyContextPatch) {
-    console.log("backup skipped: app.asar already has a context patch");
-    newHash = patchAsar();
-  } else {
-    backupOriginal();
-    newHash = patchAsar();
-  }
-  updateAsarIntegrity(newHash);
-  signAndVerifyApp();
+  applyPatch();
+} else if (command === "apply-and-restart") {
+  applyPatch();
+  restartCodexDesktop();
 } else if (command === "restore") {
   restore();
 } else if (command === "status") {
   printStatus();
 } else {
-  console.error("usage: codex-mod.js [apply|restore|status]");
+  console.error("usage: codex-mod.js [apply|apply-and-restart|restore|status]");
   process.exit(2);
 }

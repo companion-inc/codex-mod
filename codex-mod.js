@@ -306,7 +306,6 @@ function restartCodexDesktop() {
   const childProcess = require("child_process");
   const processes = desktopAppServerProcesses();
   const staleProcesses = processes.filter((processInfo) => !processInfo.command.includes(patchMarker));
-  const patchedProcesses = processes.filter((processInfo) => processInfo.command.includes(patchMarker));
   const codexWasRunning = codexDesktopIsRunning() || processes.length > 0;
 
   if (!codexWasRunning) {
@@ -314,26 +313,26 @@ function restartCodexDesktop() {
     return;
   }
 
-  if (staleProcesses.length === 0 && patchedProcesses.length > 0) {
-    console.log("Codex Desktop is already running with patched app-server args");
-    return;
-  }
-
-  const stalePids = staleProcesses.map((processInfo) => processInfo.pid).join(", ");
+  const stalePids = staleProcesses.map((processInfo) => processInfo.pid).filter(Number.isFinite);
   if (stalePids.length > 0) {
-    console.log(`Codex Desktop has stale app-server pid(s): ${stalePids}`);
+    console.log(`Codex Desktop has stale app-server pid(s): ${stalePids.join(", ")}`);
   }
 
+  const killStaleServers = stalePids.length > 0 ? `kill -9 ${stalePids.join(" ")} >/dev/null 2>&1 || true` : ":";
   const restartScript = [
-    "osascript -e 'tell application id \"com.openai.codex\" to quit' >/dev/null 2>&1 || true",
-    "sleep 2",
+    "pkill -9 -f '^/Applications/Codex\\.app/Contents/MacOS/Codex$' >/dev/null 2>&1 || true",
+    "pkill -9 -f '^/Applications/Codex\\.app/Contents/Frameworks/.*/Helpers/Codex ' >/dev/null 2>&1 || true",
+    "pkill -9 -f '^/Applications/Codex\\.app/Contents/Frameworks/.*/Helpers/browser_crashpad_handler ' >/dev/null 2>&1 || true",
+    "pkill -9 -f '^/Applications/Codex\\.app/Contents/Resources/native/bare-modifier-monitor ' >/dev/null 2>&1 || true",
+    killStaleServers,
+    "sleep 1",
     `open ${JSON.stringify(appRoot)}`,
   ].join("; ");
   childProcess.spawn("/bin/sh", ["-c", restartScript], {
     detached: true,
     stdio: "ignore",
   }).unref();
-  console.log("Codex Desktop clean restart scheduled");
+  console.log("Codex Desktop force restart scheduled");
 }
 
 function applyPatch() {

@@ -11,7 +11,7 @@ Current mod:
 - updates Electron ASAR integrity in `Info.plist`
 - ad-hoc signs the app after patching
 - can install a LaunchAgent that reapplies after Codex Desktop updates
-- cleanly restarts Codex Desktop when stale app-server args are running
+- force-restarts Codex Desktop after applying so running threads get the patched app-server
 
 The launch args become:
 
@@ -25,13 +25,13 @@ This is not tied to a single model slug. Codex applies `model_context_window` as
 
 ## One-Liners
 
-Apply once and restart Codex Desktop if needed:
+Apply once and force-restart Codex Desktop if it is running:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/companion-inc/codex-mod/main/install.sh | bash -s -- apply
 ```
 
-Apply now, restart Codex Desktop if needed, and auto-reapply after app updates:
+Apply now, force-restart Codex Desktop if it is running, and auto-reapply after app updates:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/companion-inc/codex-mod/main/install.sh | bash -s -- install-agent
@@ -57,6 +57,6 @@ Remove the auto-reapply LaunchAgent:
 
 ## Notes
 
-Already-running app-server processes keep their old command-line args, so Codex Mod schedules a clean Codex Desktop quit/reopen after applying when stale args are detected.
+Already-running app-server processes keep their old command-line args, so Codex Mod force-quits the Codex Desktop app after applying, removes stale unpatched desktop app-server processes, and reopens Codex.
 
 The auto-reapply agent is idempotent. If the desired patch is already present, ASAR integrity matches, and codesign verifies, it exits without rewriting the app.

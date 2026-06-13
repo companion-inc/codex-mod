@@ -6,6 +6,7 @@ What it does:
 
 - starts the Codex Desktop `app-server` with `model_context_window=1000000`
 - sets `model_auto_compact_token_limit=900000`
+- sets `model_auto_compact_token_limit_scope=body_after_prefix`
 - writes `~/.codex/codex-1m/model_catalog_1m.json`
 - rewrites every model in that catalog to a visible/effective 1M context window
 - rewrites the context usage tooltip to display 1M instead of 1000k
@@ -69,6 +70,7 @@ The launch args become:
 codex app-server --analytics-default-enabled \
   -c model_context_window=1000000 \
   -c model_auto_compact_token_limit=900000 \
+  -c model_auto_compact_token_limit_scope=body_after_prefix \
   -c 'model_catalog_json="/Users/you/.codex/codex-1m/model_catalog_1m.json"'
 ```
 

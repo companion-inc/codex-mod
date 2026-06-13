@@ -24,6 +24,7 @@ const legacyModelCatalogPath = path.join(legacyInstallDir, "model_catalog_1m.jso
 const sessionMigrationMarkerPath = path.join(installDir, "session-migration-v3.done");
 const contextWindowTokens = 1_000_000;
 const autoCompactTokenLimit = 900_000;
+const autoCompactTokenLimitScope = "body_after_prefix";
 const modelCatalogOverride = `model_catalog_json=${JSON.stringify(modelCatalogPath)}`;
 const patchedArgsList = [
   "app-server",
@@ -32,6 +33,8 @@ const patchedArgsList = [
   `model_context_window=${contextWindowTokens}`,
   "-c",
   `model_auto_compact_token_limit=${autoCompactTokenLimit}`,
+  "-c",
+  `model_auto_compact_token_limit_scope=${autoCompactTokenLimitScope}`,
   "-c",
   modelCatalogOverride,
 ];
@@ -745,6 +748,7 @@ function desktopAppServerNeedsRestartForDesiredArgs() {
     (processInfo) =>
       !processInfo.command.includes(`model_context_window=${contextWindowTokens}`) ||
       !processInfo.command.includes(`model_auto_compact_token_limit=${autoCompactTokenLimit}`) ||
+      !processInfo.command.includes(`model_auto_compact_token_limit_scope=${autoCompactTokenLimitScope}`) ||
       !processInfo.command.includes(modelCatalogPath),
   );
 }

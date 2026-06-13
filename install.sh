@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="${CODEX_MOD_REPO:-companion-inc/codex-mod}"
-REF="${CODEX_MOD_REF:-main}"
-RAW_BASE="${CODEX_MOD_RAW_BASE:-}"
-INSTALL_DIR="${CODEX_MOD_HOME:-${HOME}/.codex/codex-mod}"
+REPO="${CODEX_1M_REPO:-companion-inc/codex-1m}"
+REF="${CODEX_1M_REF:-main}"
+RAW_BASE="${CODEX_1M_RAW_BASE:-}"
+INSTALL_DIR="${CODEX_1M_HOME:-${HOME}/.codex/codex-1m}"
 INSTALLER="${INSTALL_DIR}/install.sh"
-PATCHER="${INSTALL_DIR}/codex-mod.js"
-PLIST="${HOME}/Library/LaunchAgents/com.companion.codex-mod.plist"
-OLD_PLIST="${HOME}/Library/LaunchAgents/com.advait.codex-desktop-1m.plist"
-LOG_DIR="${HOME}/Library/Logs/codex-mod"
+PATCHER="${INSTALL_DIR}/codex-1m.js"
+PLIST="${HOME}/Library/LaunchAgents/ai.companion.codex-1m.plist"
+OLD_PLISTS=(
+  "${HOME}/Library/LaunchAgents/com.companion.codex-1m.plist"
+  "${HOME}/Library/LaunchAgents/com.companion.codex-mod.plist"
+  "${HOME}/Library/LaunchAgents/com.advait.codex-desktop-1m.plist"
+)
+LOG_DIR="${HOME}/Library/Logs/codex-1m"
 APP_ASAR="/Applications/Codex.app/Contents/Resources/app.asar"
-NODE_BIN="${CODEX_MOD_NODE:-$(command -v node)}"
+NODE_BIN="${CODEX_1M_NODE:-$(command -v node)}"
 
 raw_base() {
   if [[ -n "${RAW_BASE}" ]]; then
@@ -35,11 +39,10 @@ raw_base() {
 
 usage() {
   cat <<EOF
-usage: install.sh [apply|status|restore|install-agent|uninstall-agent]
+usage: install.sh [apply|status|install-agent|uninstall-agent]
 
-apply           Install/update Codex Mod, apply the 1M patch, and restart Codex if needed.
+apply           Install/update Codex 1M, apply the 1M patch, and restart Codex if needed.
 status          Show patch, ASAR integrity, and codesign status.
-restore         Restore the newest saved app.asar backup.
 install-agent   Apply now and install a LaunchAgent to reapply after app updates.
 uninstall-agent Remove the LaunchAgent.
 EOF
@@ -47,12 +50,11 @@ EOF
 
 install_patcher() {
   mkdir -p "${INSTALL_DIR}"
-  local download_base
+  local download_base=""
   local source_dir
   local local_patcher
   local local_installer
   local bash_source
-  download_base="$(raw_base)"
   bash_source="${BASH_SOURCE[0]:-}"
   if [[ -n "${bash_source}" ]]; then
     source_dir="$(cd "$(dirname "${bash_source}")" 2>/dev/null && pwd -P || true)"
@@ -60,12 +62,13 @@ install_patcher() {
     source_dir=""
   fi
   local_installer="${source_dir}/install.sh"
-  local_patcher="${source_dir}/codex-mod.js"
+  local_patcher="${source_dir}/codex-1m.js"
   if [[ -n "${source_dir}" && -f "${local_installer}" ]]; then
     if [[ "${local_installer}" != "${INSTALLER}" ]]; then
       cp "${local_installer}" "${INSTALLER}"
     fi
   else
+    download_base="${download_base:-$(raw_base)}"
     curl -fsSL "${download_base}/install.sh" -o "${INSTALLER}"
   fi
   if [[ -n "${source_dir}" && -f "${local_patcher}" ]]; then
@@ -73,14 +76,23 @@ install_patcher() {
       cp "${local_patcher}" "${PATCHER}"
     fi
   else
-    curl -fsSL "${download_base}/codex-mod.js" -o "${PATCHER}"
+    download_base="${download_base:-$(raw_base)}"
+    curl -fsSL "${download_base}/codex-1m.js" -o "${PATCHER}"
   fi
   chmod +x "${INSTALLER}" "${PATCHER}"
 }
 
+cleanup_old_installs() {
+  for old_plist in "${OLD_PLISTS[@]}"; do
+    launchctl unload "${old_plist}" >/dev/null 2>&1 || true
+    rm -f "${old_plist}"
+  done
+}
+
 apply_patch() {
   install_patcher
-  "${NODE_BIN}" "${PATCHER}" apply-and-restart
+  cleanup_old_installs
+  "${NODE_BIN}" "${PATCHER}" apply-auto
 }
 
 status_patch() {
@@ -88,28 +100,21 @@ status_patch() {
   "${PATCHER}" status
 }
 
-restore_patch() {
-  install_patcher
-  "${PATCHER}" restore
-}
-
 install_agent() {
   apply_patch
   mkdir -p "${HOME}/Library/LaunchAgents" "${LOG_DIR}"
-  launchctl unload "${OLD_PLIST}" >/dev/null 2>&1 || true
-  rm -f "${OLD_PLIST}"
   cat > "${PLIST}" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.companion.codex-mod</string>
+  <string>ai.companion.codex-1m</string>
   <key>ProgramArguments</key>
   <array>
     <string>${NODE_BIN}</string>
     <string>${PATCHER}</string>
-    <string>apply-and-restart</string>
+    <string>apply-auto</string>
   </array>
   <key>RunAtLoad</key>
   <true/>
@@ -128,15 +133,14 @@ install_agent() {
 EOF
   launchctl unload "${PLIST}" >/dev/null 2>&1 || true
   launchctl load "${PLIST}"
-  echo "installed LaunchAgent: ${PLIST}"
+  echo "installed Codex 1M auto-reapply job: ${PLIST}"
 }
 
 uninstall_agent() {
   launchctl unload "${PLIST}" >/dev/null 2>&1 || true
-  launchctl unload "${OLD_PLIST}" >/dev/null 2>&1 || true
+  cleanup_old_installs
   rm -f "${PLIST}"
-  rm -f "${OLD_PLIST}"
-  echo "removed LaunchAgent: ${PLIST}"
+  echo "removed Codex 1M auto-reapply job: ${PLIST}"
 }
 
 command="${1:-apply}"
@@ -146,9 +150,6 @@ case "${command}" in
     ;;
   status)
     status_patch
-    ;;
-  restore)
-    restore_patch
     ;;
   install-agent|auto)
     install_agent

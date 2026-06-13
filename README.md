@@ -1,62 +1,74 @@
-# Codex Mod
+# Codex 1M
 
-Small macOS patcher for the Codex Desktop app.
+macOS patcher for making Codex Desktop run local threads with a 1M-token context window.
 
-Current mod:
+What it does:
 
-- forces the desktop app-server sidecar to start with global `model_context_window=1000000`
+- starts the Codex Desktop `app-server` with `model_context_window=1000000`
 - sets `model_auto_compact_token_limit=900000`
-- backs up `app.asar`
-- repacks Electron ASAR cleanly
+- writes `~/.codex/codex-1m/model_catalog_1m.json`
+- rewrites every model in that catalog to a visible/effective 1M context window
+- migrates old local rollout files so reopened threads do not keep stale `258400` context metadata
+- removes stale "full context" token markers from old context-window failures
+- repacks `app.asar` in place using a temporary file
 - updates Electron ASAR integrity in `Info.plist`
-- ad-hoc signs the app after patching
-- can install a LaunchAgent that reapplies after Codex Desktop updates
-- force-restarts Codex Desktop after applying so running threads get the patched app-server
+- ad-hoc signs the patched app
+- force-restarts Codex Desktop and kills every Desktop `app-server` sidecar
+- installs the `Codex 1M auto-reapply job` LaunchAgent for app updates
 
-The launch args become:
+The LaunchAgent is:
 
-```bash
-codex app-server --analytics-default-enabled \
-  -cmodel_context_window=1000000 \
-  -cmodel_auto_compact_token_limit=900000
+```text
+~/Library/LaunchAgents/ai.companion.codex-1m.plist
 ```
 
-This is not tied to a single model slug. Codex applies `model_context_window` as a global config override to the selected model at runtime, so every local Codex Desktop thread/model launched through the patched desktop app-server gets the override. The model/provider still has to actually support the requested window.
+with launchd label:
+
+```text
+ai.companion.codex-1m
+```
+
+Logs go to:
+
+```text
+~/Library/Logs/codex-1m/
+```
 
 ## One-Liners
 
-Apply once and force-restart Codex Desktop if it is running:
+Apply once and force-restart Codex Desktop:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/companion-inc/codex-mod/main/install.sh | bash -s -- apply
+curl -fsSL https://raw.githubusercontent.com/companion-inc/codex-1m/main/install.sh | bash -s -- apply
 ```
 
-Apply now, force-restart Codex Desktop if it is running, and auto-reapply after app updates:
+Apply now and auto-reapply after app updates:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/companion-inc/codex-mod/main/install.sh | bash -s -- install-agent
+curl -fsSL https://raw.githubusercontent.com/companion-inc/codex-1m/main/install.sh | bash -s -- install-agent
 ```
 
 Check status:
 
 ```bash
-~/.codex/codex-mod/install.sh status
+~/.codex/codex-1m/install.sh status
 ```
 
-Restore the newest saved `app.asar` backup:
+Remove the auto-reapply job:
 
 ```bash
-~/.codex/codex-mod/install.sh restore
-```
-
-Remove the auto-reapply LaunchAgent:
-
-```bash
-~/.codex/codex-mod/install.sh uninstall-agent
+~/.codex/codex-1m/install.sh uninstall-agent
 ```
 
 ## Notes
 
-Already-running app-server processes keep their old command-line args, so Codex Mod force-quits the Codex Desktop app after applying, removes stale unpatched desktop app-server processes, and reopens Codex.
+The launch args become:
 
-The auto-reapply agent is idempotent. If the desired patch is already present, ASAR integrity matches, and codesign verifies, it exits without rewriting the app.
+```bash
+codex app-server --analytics-default-enabled \
+  -c model_context_window=1000000 \
+  -c model_auto_compact_token_limit=900000 \
+  -c 'model_catalog_json="/Users/you/.codex/codex-1m/model_catalog_1m.json"'
+```
+
+This patches local Codex metadata and UI behavior for all local Desktop threads/models launched through the patched app-server. The model/provider still has to actually accept the requested window.

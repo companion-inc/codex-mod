@@ -3,7 +3,7 @@ set -euo pipefail
 
 REPO="${CODEX_MOD_REPO:-companion-inc/codex-mod}"
 REF="${CODEX_MOD_REF:-main}"
-RAW_BASE="${CODEX_MOD_RAW_BASE:-https://raw.githubusercontent.com/${REPO}/${REF}}"
+RAW_BASE="${CODEX_MOD_RAW_BASE:-}"
 INSTALL_DIR="${CODEX_MOD_HOME:-${HOME}/.codex/codex-mod}"
 INSTALLER="${INSTALL_DIR}/install.sh"
 PATCHER="${INSTALL_DIR}/codex-mod.js"
@@ -12,6 +12,26 @@ OLD_PLIST="${HOME}/Library/LaunchAgents/com.advait.codex-desktop-1m.plist"
 LOG_DIR="${HOME}/Library/Logs/codex-mod"
 APP_ASAR="/Applications/Codex.app/Contents/Resources/app.asar"
 NODE_BIN="${CODEX_MOD_NODE:-$(command -v node)}"
+
+raw_base() {
+  if [[ -n "${RAW_BASE}" ]]; then
+    printf '%s\n' "${RAW_BASE}"
+    return
+  fi
+
+  local resolved_ref="${REF}"
+  if [[ ! "${REF}" =~ ^[0-9a-f]{40}$ ]]; then
+    resolved_ref="$(
+      curl -fsSL "https://api.github.com/repos/${REPO}/commits/${REF}" \
+        | sed -n 's/^[[:space:]]*"sha": "\([0-9a-f]\{40\}\)",$/\1/p' \
+        | head -n 1
+    )"
+  fi
+  if [[ -z "${resolved_ref}" ]]; then
+    resolved_ref="${REF}"
+  fi
+  printf 'https://raw.githubusercontent.com/%s/%s\n' "${REPO}" "${resolved_ref}"
+}
 
 usage() {
   cat <<EOF
@@ -27,10 +47,12 @@ EOF
 
 install_patcher() {
   mkdir -p "${INSTALL_DIR}"
+  local download_base
   local source_dir
   local local_patcher
   local local_installer
   local bash_source
+  download_base="$(raw_base)"
   bash_source="${BASH_SOURCE[0]:-}"
   if [[ -n "${bash_source}" ]]; then
     source_dir="$(cd "$(dirname "${bash_source}")" 2>/dev/null && pwd -P || true)"
@@ -44,14 +66,14 @@ install_patcher() {
       cp "${local_installer}" "${INSTALLER}"
     fi
   else
-    curl -fsSL "${RAW_BASE}/install.sh" -o "${INSTALLER}"
+    curl -fsSL "${download_base}/install.sh" -o "${INSTALLER}"
   fi
   if [[ -n "${source_dir}" && -f "${local_patcher}" ]]; then
     if [[ "${local_patcher}" != "${PATCHER}" ]]; then
       cp "${local_patcher}" "${PATCHER}"
     fi
   else
-    curl -fsSL "${RAW_BASE}/codex-mod.js" -o "${PATCHER}"
+    curl -fsSL "${download_base}/codex-mod.js" -o "${PATCHER}"
   fi
   chmod +x "${INSTALLER}" "${PATCHER}"
 }
